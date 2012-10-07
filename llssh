@@ -3,13 +3,25 @@ use strict;
 use warnings;
 
 use Getopt::Long 2.24, qw( :config bundling no_ignore_case no_auto_abbrev require_order prefix_pattern=- );
-use IO::Async::Loop;
-use Fcntl;
+use Fcntl qw( O_WRONLY O_CREAT O_EXCL );
+use POSIX 'WNOHANG';
+use IO::Select;
+use IO::Socket;
+
+sub BLOCKSIZE () { 8192 }
 
 sub BINARY_SWITCH () { 'bcDeFIiLlmOopRSWw' }
 sub  UNARY_SWITCH () { '1246AaCfgKkMNnqsTtVvXxYy' }
 
 my $PORT = 12345;
+
+my $listen = IO::Socket::INET->new(
+	Listen    => 1,
+	Proto     => 'tcp',
+	LocalAddr => '127.0.0.1',
+	LocalPort => $PORT,
+	ReusePort => 1,
+);
 
 my @ssh_argv;
 
@@ -28,42 +40,76 @@ if ( not @ARGV ) { # login shell requested
 push @ssh_argv, -R => "$PORT:localhost:$PORT";
 unshift @ARGV, env => "SSH_LIFELINE_PORT=$PORT";
 
-my $loop = IO::Async::Loop->new;
+my $ssh_exit;
 
-$loop->fork(
-	code    => sub { exec { 'ssh' } ssh => @ssh_argv, $hostname, @ARGV },
-	on_exit => sub { $loop->stop },
-);
+for my $firstborn ( fork ) {
+	die "Coudldn't fork: $!\n" if not defined $firstborn;
+	if ( $firstborn ) {
+		$SIG{'CHLD'} = sub {
+			my $child;
+			do {
+				$child = waitpid( -1, WNOHANG );
+				$ssh_exit = $? >> 8 if $child == $firstborn;
+			} while $child > 0;
+		};
+	}
+	else {
+		exec { 'ssh' } ssh => @ssh_argv, $hostname, @ARGV;
+	}
+}
 
-$loop->listen(
-	socktype  => 'stream',
-	service   => $PORT,
-	on_stream => sub {
-		my ( $stream ) = @_;
-		$stream->configure(
-			on_read => sub {
-				my ( $stream, $buf_r, $eof ) = @_;
-				return 1 if not $$buf_r =~ s/\A([^\x{0}]+)\x{0}//;
+my $select = IO::Select->new( $listen );
+
+my %buf;
+my %name;
+my %outfh;
+
+sub done {
+	my ( $sock ) = @_;
+	$select->remove( $sock );
+	$sock->close;
+	delete $outfh{ $sock };
+	delete $buf{ $sock };
+	delete $name{ $sock };
+	no warnings 'exiting';
+	next SOCK;
+}
+
+until ( defined $ssh_exit ) {
+	my @ready = $select->can_read; # may return () if interrupted by SIGCHLD
+
+	SOCK: for my $sock ( @ready ) {
+		if ( $sock == $listen ) {
+			my $new = $listen->accept;
+			$select->add( $new );
+			$buf{ $new } = '';
+			next;
+		}
+
+		for ( $buf{ $sock } ) {
+			1 while BLOCKSIZE == ( $sock->sysread( $_, BLOCKSIZE, length ) || 0 );
+
+			if ( !$outfh{ $sock } and s/\A([^\x{0}]+)\x{0}// ) {
 				my $filename = $1;
 				$filename =~ s!.*/!!;
-				return 0 if not length $filename;
+				done $sock if not length $filename;
 				substr $filename, 0, 0, '/tmp/';
-				sysopen my $fh, $filename, O_WRONLY|O_CREAT|O_EXCL
-					or return 0;
-				return sub {
-					my ( $stream, $buf_r, $eof ) = @_;
-					( print $fh $$buf_r ) or return 0 if length $$buf_r;
-					if ( $eof ) {
-						$loop->fork( code => sub { exec open => $filename } );
-						return 0;
-					}
-					$$buf_r = '';
-					return 1;
-				};
-			},
-		);
-		$loop->add( $stream );
-	},
-);
+				$name{ $sock } = $filename;
+				sysopen $outfh{ $sock }, $filename, O_WRONLY|O_CREAT|O_EXCL
+					or done $sock;
+			}
 
-$loop->run;
+			if ( my $fh = $outfh{ $sock } ) {
+				print $fh $_;
+				$_ = '';
+			}
+		}
+
+		if ( $sock->eof ) {
+			for ( fork ) { exec open => $name{ $sock } if defined and not $_ }
+			done $sock;
+		}
+	}
+}
+
+exit $ssh_exit;
