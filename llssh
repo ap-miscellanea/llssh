@@ -13,15 +13,16 @@ sub BLOCKSIZE () { 8192 }
 sub BINARY_SWITCH () { 'bcDeFIiLlmOopRSWw' }
 sub  UNARY_SWITCH () { '1246AaCfgKkMNnqsTtVvXxYy' }
 
-my $PORT = 12345;
-
 my $listen = IO::Socket::INET->new(
 	Listen    => 1,
 	Proto     => 'tcp',
 	LocalAddr => '127.0.0.1',
-	LocalPort => $PORT,
+	LocalPort => 0,
 	ReusePort => 1,
 );
+
+my $LOCAL_PORT  = $listen->sockport;
+my $REMOTE_PORT = 12345;
 
 my @ssh_argv;
 
@@ -37,8 +38,8 @@ if ( not @ARGV ) { # login shell requested
 	@ARGV = ( perl => -e => q{'m![^/]+\z! && exec { $_ } "-$&" for +(getpwnam $ENV{USER})[8]'} );
 }
 
-push @ssh_argv, -R => "$PORT:localhost:$PORT";
-unshift @ARGV, env => "SSH_LIFELINE_PORT=$PORT";
+push @ssh_argv, -R => "$REMOTE_PORT:localhost:$LOCAL_PORT";
+unshift @ARGV, env => "SSH_LIFELINE_PORT=$REMOTE_PORT";
 
 my $ssh_exit;
 
