@@ -43,9 +43,9 @@ unshift @ARGV, env => "SSH_LIFELINE_PORT=$REMOTE_PORT";
 
 my $ssh_exit;
 
-for my $firstborn ( fork ) {
-	die "Coudldn't fork: $!\n" if not defined $firstborn;
-	if ( $firstborn ) {
+for ( fork ) {
+	die "Coudldn't fork: $!\n" if not defined;
+	if ( my $firstborn = $_ ) {
 		$SIG{'CHLD'} = sub {
 			my $child;
 			do {
