@@ -38,7 +38,7 @@ if ( not @ARGV ) { # login shell requested
 	@ARGV = ( perl => -e => q{'m![^/]+\z! && exec { $_ } "-$&" for +(getpwnam $ENV{USER})[8]'} );
 }
 
-push @ssh_argv, -R => "$REMOTE_PORT:localhost:$LOCAL_PORT";
+push @ssh_argv, -S => none => -R => "$REMOTE_PORT:localhost:$LOCAL_PORT";
 unshift @ARGV, env => "SSH_LIFELINE_PORT=$REMOTE_PORT";
 
 my $ssh_exit;
