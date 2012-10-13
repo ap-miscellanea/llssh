@@ -2,7 +2,7 @@
 use strict;
 use warnings;
 
-use Getopt::Long 2.24, qw( :config bundling no_ignore_case no_auto_abbrev require_order prefix_pattern=- );
+use Getopt::Long 2.24, qw( GetOptionsFromArray :config bundling no_ignore_case no_auto_abbrev require_order prefix_pattern=- );
 use Fcntl qw( O_WRONLY O_CREAT O_EXCL );
 use POSIX 'WNOHANG';
 use IO::Select;
@@ -10,8 +10,32 @@ use IO::Socket;
 
 sub BLOCKSIZE () { 8192 }
 
-sub BINARY_SWITCH () { 'bcDeFIiLlmOopRSWw' }
-sub  UNARY_SWITCH () { '1246AaCfgKkMNnqsTtVvXxYy' }
+sub parse_ssh_argv {
+	my ( $argv_ref ) = @_;
+	my @ssh_argv;
+
+	my $binary_switch = sub { push @ssh_argv, '-'.shift, @_ };
+	my  $unary_switch = sub { push @ssh_argv, '-'.shift };
+
+	my @opt_spec = (
+		( map {; "$_=s" => $binary_switch } split //, 'bcDeFIiLlmOopRSWw' ),
+		( map {;  $_    => $unary_switch  } split //, '1246AaCfgKkMNnqsTtVvXxYy' ),
+	);
+
+	GetOptionsFromArray $argv_ref, @opt_spec or exit 1;
+	push @ssh_argv, shift @$argv_ref if @$argv_ref; # the hostname
+	GetOptionsFromArray $argv_ref, @opt_spec or exit 1 if @$argv_ref;
+
+	return @ssh_argv;
+}
+
+
+my @ssh_argv = parse_ssh_argv \@ARGV;
+
+if ( not @ARGV ) { # login shell requested
+	push @ssh_argv, '-t';
+	@ARGV = ( perl => -e => q{'m![^/]+\z! && exec { $_ } "-$&" for +(getpwnam $ENV{USER})[8]'} );
+}
 
 my $listen = IO::Socket::INET->new(
 	Listen    => 1,
@@ -23,24 +47,6 @@ my $listen = IO::Socket::INET->new(
 
 my $LOCAL_PORT  = $listen->sockport;
 my $REMOTE_PORT = 12345;
-
-my @ssh_argv;
-
-{
-	my @opt_spec = (
-		( map {; "$_=s" => sub { push @ssh_argv, '-'.shift, @_ } } split //, BINARY_SWITCH ),
-		( map {;  $_    => sub { push @ssh_argv, '-'.shift     } } split //,  UNARY_SWITCH ),
-	);
-
-	GetOptions @opt_spec or exit 1;
-	push @ssh_argv, shift @ARGV if @ARGV;
-	GetOptions @opt_spec or exit 1 if @ARGV;
-}
-
-if ( not @ARGV ) { # login shell requested
-	push @ssh_argv, '-t';
-	@ARGV = ( perl => -e => q{'m![^/]+\z! && exec { $_ } "-$&" for +(getpwnam $ENV{USER})[8]'} );
-}
 
 push @ssh_argv, -S => none => -R => "$REMOTE_PORT:localhost:$LOCAL_PORT";
 unshift @ARGV, env => "SSH_LIFELINE_PORT=$REMOTE_PORT";
