@@ -24,18 +24,17 @@ my $listen = IO::Socket::INET->new(
 my $LOCAL_PORT  = $listen->sockport;
 my $REMOTE_PORT = 12345;
 
-my ( @ssh_argv, $did_hostname );
+my @ssh_argv;
 
 {
-	GetOptions(
+	my @opt_spec = (
 		( map {; "$_=s" => sub { push @ssh_argv, '-'.shift, @_ } } split //, BINARY_SWITCH ),
 		( map {;  $_    => sub { push @ssh_argv, '-'.shift     } } split //,  UNARY_SWITCH ),
-	) or exit 1;
+	);
 
-	if ( not $did_hostname++ ) {
-		push @ssh_argv, shift @ARGV;
-		redo;
-	}
+	GetOptions @opt_spec or exit 1;
+	push @ssh_argv, shift @ARGV if @ARGV;
+	GetOptions @opt_spec or exit 1 if @ARGV;
 }
 
 if ( not @ARGV ) { # login shell requested
