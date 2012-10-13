@@ -51,6 +51,9 @@ my $REMOTE_PORT = 12345;
 push @ssh_argv, -S => none => -R => "$REMOTE_PORT:localhost:$LOCAL_PORT";
 unshift @ARGV, env => "SSH_LIFELINE_PORT=$REMOTE_PORT";
 
+pipe my $read_ssh_stderr, my $write_ssh_stderr
+	or die "Couldn't create pipe: $!\n";
+
 my $ssh_exit;
 
 for ( fork ) {
@@ -65,11 +68,12 @@ for ( fork ) {
 		};
 	}
 	else {
+		open STDERR, '>&=', $write_ssh_stderr or exit 255;
 		exec { 'ssh' } ssh => @ssh_argv, @ARGV;
 	}
 }
 
-my $select = IO::Select->new( $listen );
+my $select = IO::Select->new( $listen, $read_ssh_stderr );
 
 my %buf;
 my %name;
@@ -94,6 +98,13 @@ until ( defined $ssh_exit ) {
 			my $new = $listen->accept;
 			$select->add( $new );
 			$buf{ $new } = '';
+			next;
+		}
+
+		if ( $sock == $read_ssh_stderr ) {
+			my $buf;
+			1 while BLOCKSIZE == ( $sock->sysread( $buf, BLOCKSIZE, length $buf ) || 0 );
+			print STDERR $buf;
 			next;
 		}
 
