@@ -7,6 +7,7 @@ use Fcntl qw( O_WRONLY O_CREAT O_EXCL );
 use POSIX 'WNOHANG';
 use IO::Select;
 use IO::Socket;
+use File::Temp 'tmpnam';
 
 sub BLOCKSIZE () { 8192 }
 
@@ -32,11 +33,6 @@ sub parse_ssh_argv {
 
 my @ssh_argv = parse_ssh_argv \@ARGV;
 
-if ( not @ARGV ) { # login shell requested
-	push @ssh_argv, '-t';
-	@ARGV = ( perl => -e => q{'m![^/]+\z! && exec { $_ } "-$&" for +(getpwnam $ENV{USER})[8]'} );
-}
-
 my $listen = IO::Socket::INET->new(
 	Listen    => 1,
 	Proto     => 'tcp',
@@ -45,11 +41,14 @@ my $listen = IO::Socket::INET->new(
 	ReusePort => 1,
 );
 
-my $LOCAL_PORT  = $listen->sockport;
-my $REMOTE_PORT = 12345;
+my $ctl_sock = tmpnam();
 
-push @ssh_argv, -S => none => -R => "$REMOTE_PORT:localhost:$LOCAL_PORT";
-unshift @ARGV, env => "SSH_LIFELINE_PORT=$REMOTE_PORT";
+push @ssh_argv, -S => $ctl_sock;
+
+my @agent = ( perl => -e => do { local $/; "'".<DATA>."'" }, '--' );
+
+unshift @agent, '-t' if not @ARGV; # login shell requested
+unshift @agent, -M => -R => '0:localhost:' . $listen->sockport;
 
 pipe my $read_ssh_stderr, my $write_ssh_stderr
 	or die "Couldn't create pipe: $!\n";
@@ -68,10 +67,24 @@ for ( fork ) {
 		};
 	}
 	else {
+		require IO::Handle;
+		$write_ssh_stderr->autoflush(1);
 		open STDERR, '>&=', $write_ssh_stderr or exit 255;
-		exec { 'ssh' } ssh => @ssh_argv, @ARGV;
+		exec { 'ssh' } ssh => @ssh_argv, @agent, @ARGV;
 	}
 }
+
+<$read_ssh_stderr> =~ /^Allocated port (\d+) for remote forward to localhost:${\$listen->sockport}/
+	or die "Couldn't parse remote port\n";
+
+my $remote_port = $1;
+
+<$read_ssh_stderr> =~ /^llssh fifo: (.+)/
+	or die "Couldn't parse fifo path\n";
+
+my $fifo = $1;
+
+system ssh => @ssh_argv, "echo $remote_port > $fifo";
 
 my $select = IO::Select->new( $listen, $read_ssh_stderr );
 
@@ -135,3 +148,24 @@ until ( defined $ssh_exit ) {
 }
 
 exit $ssh_exit;
+
+__END__
+use strict;
+use File::Temp "tmpnam";
+use POSIX "mkfifo";
+
+my $Couldnt = sprintf "Couldn%st", chr 39;
+
+my $fifo = tmpnam();
+mkfifo $fifo, 0600 or die "$Couldnt create fifo: $!\n";
+print STDERR "ssh lifeline fifo: $fifo\n";
+open my $pipe, "<", $fifo or die "$Couldnt open fifo: $!\n";
+chomp( $ENV{"SSH_LIFELINE_PORT"} = <$pipe> );
+close $pipe or die "$Couldnt close fifo: $!\n";
+unlink $fifo or die "$Couldnt unlink fifo: $!\n";
+
+exec { $ARGV[0] } @ARGV if @ARGV;
+
+my $shell = +(getpwnam $ENV{USER})[8];
+$shell =~ m!([^/]+)\z!;
+exec { $shell } "-$1";
