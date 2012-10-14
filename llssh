@@ -90,7 +90,7 @@ my $select = IO::Select->new( $listen, $read_ssh_stderr );
 
 my %buf;
 my %name;
-my %outfh;
+my %outfh = ( $read_ssh_stderr => \*STDERR );
 
 sub done {
 	my ( $sock ) = @_;
@@ -111,13 +111,6 @@ until ( defined $ssh_exit ) {
 			my $new = $listen->accept;
 			$select->add( $new );
 			$buf{ $new } = '';
-			next;
-		}
-
-		if ( $sock == $read_ssh_stderr ) {
-			my $buf;
-			1 while BLOCKSIZE == ( $sock->sysread( $buf, BLOCKSIZE, length $buf ) || 0 );
-			print STDERR $buf;
 			next;
 		}
 
