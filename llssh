@@ -50,6 +50,8 @@ my @agent = ( perl => -e => do { local $/; "'".<DATA>."'" }, '--' );
 unshift @agent, '-t' if not @ARGV; # login shell requested
 unshift @agent, -M => -R => '0:localhost:' . $listen->sockport;
 
+my $port_rx = qr/^Allocated port (\d+) for remote forward to localhost:${\$listen->sockport}\r?\n/m;
+
 pipe my $read_ssh_stderr, my $write_ssh_stderr
 	or die "Couldn't create pipe: $!\n";
 
@@ -74,23 +76,12 @@ for ( fork ) {
 	}
 }
 
-<$read_ssh_stderr> =~ /^Allocated port (\d+) for remote forward to localhost:${\$listen->sockport}/
-	or die "Couldn't parse remote port\n";
-
-my $remote_port = $1;
-
-<$read_ssh_stderr> =~ /^llssh fifo: (.+)/
-	or die "Couldn't parse fifo path\n";
-
-my $fifo = $1;
-
-system ssh => @ssh_argv, "echo $remote_port > $fifo";
-
 my $select = IO::Select->new( $listen, $read_ssh_stderr );
 
 my %buf;
 my %name;
 my %outfh = ( $read_ssh_stderr => \*STDERR );
+my ( $remote_port, $agent_fifo );
 
 sub done {
 	my ( $sock ) = @_;
@@ -127,11 +118,26 @@ until ( defined $ssh_exit ) {
 					or done $sock;
 			}
 
+			if ( $sock == $read_ssh_stderr ) {
+				unless ( defined $remote_port and defined $agent_fifo ) {
+					$remote_port = $1
+						if s/$port_rx//m;
+					$agent_fifo = $1
+						if s/^ssh lifeline fifo: (.+)\n//m;
+					if ( defined $remote_port and defined $agent_fifo ) {
+						system ssh => @ssh_argv, "echo $remote_port > $agent_fifo";
+					}
+					else { next SOCK }
+				}
+			}
+
 			if ( my $fh = $outfh{ $sock } ) {
 				print $fh $_;
 				$_ = '';
 			}
 		}
+
+		next if $sock == $read_ssh_stderr;
 
 		if ( $sock->eof ) {
 			for ( fork ) { exec open => $name{ $sock } if defined and not $_ }
