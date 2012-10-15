@@ -120,8 +120,9 @@ until ( defined $ssh_exit ) {
 		}
 
 		if ( $sock->eof ) {
-			if ( $outfh{ $sock } ) {
-				for ( fork ) { exec open => $name{ $sock } if defined and not $_ }
+			my $name = $name{ $sock };
+			if ( $name and ( $outfh{ $sock } or $name =~ m!^[a-z+]+://! ) ) {
+				for ( fork ) { exec open => $name if defined and not $_ }
 			}
 			done $sock;
 		}
