@@ -101,13 +101,16 @@ until ( defined $ssh_exit ) {
 			1 while BLOCKSIZE == ( $sock->sysread( $_, BLOCKSIZE, length ) || 0 );
 
 			if ( !$outfh{ $sock } and s/\A([^\x{0}]+)\x{0}// ) {
-				my $filename = $1;
-				$filename =~ s!.*/!!;
-				done $sock if not length $filename;
-				substr $filename, 0, 0, '/tmp/';
-				$name{ $sock } = $filename;
-				sysopen $outfh{ $sock }, $filename, O_WRONLY|O_CREAT|O_EXCL
-					or done $sock;
+				$name{ $sock } = $1;
+			}
+
+			if ( !$outfh{ $sock } and $name{ $sock } and length ) {
+				for my $fn ( $name{ $sock } ) {
+					$fn =~ m!([^/]+)\z! or done $sock;
+					$fn = "/tmp/$1";
+					sysopen $outfh{ $sock }, $fn, O_WRONLY|O_CREAT|O_EXCL
+						or done $sock;
+				}
 			}
 
 			if ( my $fh = $outfh{ $sock } ) {
@@ -117,7 +120,10 @@ until ( defined $ssh_exit ) {
 		}
 
 		if ( $sock->eof ) {
-			for ( fork ) { exec open => $name{ $sock } if defined and not $_ }
+			my $name = $name{ $sock };
+			if ( $name and ( $outfh{ $sock } or $name =~ m!^[a-z+]+://! ) ) {
+				for ( fork ) { exec open => $name if defined and not $_ }
+			}
 			done $sock;
 		}
 	}
