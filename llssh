@@ -53,7 +53,7 @@ unshift @ARGV, env => "SSH_LIFELINE_PORT=$REMOTE_PORT";
 
 my $ssh_exit;
 
-for ( fork ) {
+for ( scalar fork ) {
 	die "Coudldn't fork: $!\n" if not defined;
 	if ( my $firstborn = $_ ) {
 		$SIG{'CHLD'} = sub {
