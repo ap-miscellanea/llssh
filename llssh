@@ -107,7 +107,6 @@ until ( defined $ssh_exit ) {
 			if ( !$outfh{ $sock } and $name{ $sock } and length ) {
 				for my $fn ( $name{ $sock } ) {
 					$fn =~ m!([^/]+)\z! or done $sock;
-					$fn = "/tmp/$1";
 					sysopen $outfh{ $sock }, $fn, O_WRONLY|O_CREAT|O_EXCL
 						or done $sock;
 				}
